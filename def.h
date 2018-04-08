@@ -71,7 +71,13 @@
 #define EXT_MOTOR_RANGE
 #endif
 
-
+#if defined(SBUS)
+#define RC_CHANS 18
+#elif defined(SPEKTRUM) || defined(SERIAL_SUM_PPM)
+#define RC_CHANS 12
+#else
+#define RC_CHANS 8
+#endif
 
 
 /**************************  atmega32u4 (Promicro)  ***********************************/

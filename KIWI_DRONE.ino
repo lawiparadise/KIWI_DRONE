@@ -1133,7 +1133,7 @@ void loop () {
       case 0:
         taskOrder++;
 #if MAG
-        if (Mag_getADC()) break; // max 350 µs (HMC5883) // only break when we actually did something
+        if (Mag_getADC()) break; // max 350 μs (HMC5883) // only break when we actually did something
 #endif
       case 1:
         taskOrder++;

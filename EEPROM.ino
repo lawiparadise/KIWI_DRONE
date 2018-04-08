@@ -157,4 +157,12 @@ void LoadDefaults() {
 }
 
 
+void writeGlobalSet(uint8_t b) {
+  global_conf.checksum = calculate_sum((uint8_t*)&global_conf, sizeof(global_conf));
+  eeprom_write_block((const void*)&global_conf, (void*)0, sizeof(global_conf));
+  if (b == 1) blinkLED(15,20,1);
+  #if defined(BUZZER)
+    alarmArray[7] = 1; 
+  #endif
 
+}
