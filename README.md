@@ -1,10 +1,12 @@
 KIWI_DRONE
 ===============
+[KIWI DRONE] is modifed from FlexBot Project(http://flexbot.cc/wiki)
 
-   [KIWI DRONE] is modifed from FlexBot Project(http://flexbot.cc/wiki)
-   [KIWI DRONE] is under the terms of the GNU General Public License
-   [KIWI DRONE] is made for education of Software and Drone
-   [KIWI DRONE] is made by WHIT-edu CodingBird(http://codingbird.kr)
+under the terms of the GNU General Public License
+
+made for education of Software and Drone
+
+made by WHIT-edu CodingBird(http://codingbird.kr)
 
 ##Source Code
 
@@ -16,5 +18,4 @@ git clone https://github.com/lawiparadise/KIWI_DRONE
 
 ####Latest release
 
-not yet
-
+v1.0
