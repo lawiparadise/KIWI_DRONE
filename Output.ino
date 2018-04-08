@@ -357,3 +357,63 @@ void writeAllMotors(int16_t mc) {   // Sends commands to all motors
   }
   writeMotors();
 }
+
+void mixTable() {
+  int16_t maxMotor;
+  uint8_t i;
+
+  #define PIDMIX(X,Y,Z) rcCommand[THROTTLE] + axisPID[ROLL]*X + axisPID[PITCH]*Y + YAW_DIRECTION * axisPID[YAW]*Z
+}
+
+
+void writeServos() {
+  #if defined(SERVO)
+    #if defined(PRI_SERVO_FROM)    // write primary servos
+      for(uint8_t i = (PRI_SERVO_FROM-1); i < PRI_SERVO_TO; i++){
+        #if defined(PROMINI) || (defined(PROMICRO) && defined(HWPWM6)) || (defined(MEGA) && defined(MEGA_HW_PWM_SERVOS))
+          atomicServo[i] = (servo[i]-1000)>>2;
+        #else
+          atomicServo[i] = (servo[i]-1000)<<4;
+        #endif
+      }
+    #endif
+    #if defined(SEC_SERVO_FROM)   // write secundary servos
+      #if (defined(SERVO_TILT)|| defined(SERVO_MIX_TILT)) && defined(MMSERVOGIMBAL)
+        // Moving Average Servo Gimbal by Magnetron1
+        static int16_t mediaMobileServoGimbalADC[3][MMSERVOGIMBALVECTORLENGHT];
+        static int32_t mediaMobileServoGimbalADCSum[3];
+        static uint8_t mediaMobileServoGimbalIDX;
+        uint8_t axis;
+
+        mediaMobileServoGimbalIDX = ++mediaMobileServoGimbalIDX % MMSERVOGIMBALVECTORLENGHT;
+        for (axis=(SEC_SERVO_FROM-1); axis < SEC_SERVO_TO; axis++) {
+          mediaMobileServoGimbalADCSum[axis] -= mediaMobileServoGimbalADC[axis][mediaMobileServoGimbalIDX];
+          mediaMobileServoGimbalADC[axis][mediaMobileServoGimbalIDX] = servo[axis];
+          mediaMobileServoGimbalADCSum[axis] += mediaMobileServoGimbalADC[axis][mediaMobileServoGimbalIDX];
+          #if defined(PROMINI) || (defined(PROMICRO) && defined(HWPWM6))
+            atomicServo[axis] = (mediaMobileServoGimbalADCSum[axis] / MMSERVOGIMBALVECTORLENGHT - 1000)>>2;
+          #else
+            atomicServo[axis] = (mediaMobileServoGimbalADCSum[axis] / MMSERVOGIMBALVECTORLENGHT - 1000)<<4;
+          #endif
+        }
+      #else
+        for(uint8_t i = (SEC_SERVO_FROM-1); i < SEC_SERVO_TO; i++){
+          #if defined(PROMINI) || (defined(PROMICRO) && defined(HWPWM6)) || (defined(MEGA) && defined(MEGA_HW_PWM_SERVOS))
+            atomicServo[i] = (servo[i]-1000)>>2;
+          #else
+            atomicServo[i] = (servo[i]-1000)<<4;
+          #endif
+        }
+      #endif
+    #endif
+    // write HW PWM gimbal servos for the mega (needs to be also implemented to the MMSERVOGIMBAL)
+    #if defined(MEGA) && defined(MEGA_HW_PWM_SERVOS)
+      OCR5C = servo[0];
+      OCR5B = servo[1];
+      OCR5A = servo[2];
+      OCR1A = servo[3];
+      OCR1B = servo[4];
+    #endif
+  #endif
+}
+
