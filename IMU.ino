@@ -1,103 +1,4 @@
 
-#define GYRO_SCALE ((2279 * PI)/((32767.0f / 4.0f ) * 180.0f * 1000000.0f)) //(ITG3200 and MPU6050)
-// +-2000/sec deg scale
-// for WMP, empirical value should be #define GYRO_SCALE (1.0f/200e6f)
-// !!!!should be adjusted to the rad/sec and be part defined in each gyro sensor
-
-#ifndef ACC_LPF_FACTOR
-  #define ACC_LPF_FACTOR 4 // that means a LPF of 16
-#endif
-
-#ifndef GYR_CMPF_FACTOR
-  #define GYR_CMPF_FACTOR 600
-#endif
-
-/* Set the Gyro Weight for Gyro/Magnetometer complementary filter
-   Increasing this value would reduce and delay Magnetometer influence on the output of the filter*/
-#define GYR_CMPFM_FACTOR 250
-
-//****** end of advanced users settings *************
-#define INV_GYR_CMPF_FACTOR   (1.0f / (GYR_CMPF_FACTOR  + 1.0f))
-#define INV_GYR_CMPFM_FACTOR  (1.0f / (GYR_CMPFM_FACTOR + 1.0f))
-
-#define UPDATE_INTERVAL 25000    // 40hz update rate (20hz LPF on acc)
-#define BARO_TAB_SIZE   21
-
-#define ACC_Z_DEADBAND (acc_1G>>5) // was 40 instead of 32 now
-
-#define applyDeadband(value, deadband)  \
-  if(abs(value) < deadband) {           \
-    value = 0;                          \
-  } else if(value > 0){                 \
-    value -= deadband;                  \
-  } else if(value < 0){                 \
-    value += deadband;                  \
-  }
-  
-typedef struct fp_vector {    
-  float X,Y,Z;    
-} t_fp_vector_def;
-
-typedef union {    
-  float A[3];   
-  t_fp_vector_def V;    
-} t_fp_vector;
-
-typedef struct int32_t_vector {
-  int32_t X,Y,Z;
-} t_int32_t_vector_def;
-
-typedef union {
-  int32_t A[3];
-  t_int32_t_vector_def V;
-} t_int32_t_vector;
-
-
-static t_fp_vector EstG;
-static t_int32_t_vector EstG32;
-#if MAG
-  static t_int32_t_vector EstM32;
-  static t_fp_vector EstM;
-#endif
-
-
-int16_t _atan2(int32_t y, int32_t x){
-  float z = (float)y / x;
-  int16_t a;
-  if ( abs(y) < abs(x) ){
-     a = 573 * z / (1.0f + 0.28f * z * z);
-   if (x<0) {
-     if (y<0) a -= 1800;
-     else a += 1800;
-   }
-  } else {
-   a = 900 - 573 * z / (z * z + 0.28f);
-   if (y<0) a -= 1800;
-  }
-  return a;
-}
-
-float InvSqrt (float x){ 
-  union{  
-    int32_t i;  
-    float   f; 
-  } conv; 
-  conv.f = x; 
-  conv.i = 0x5f3759df - (conv.i >> 1); 
-  return 0.5f * conv.f * (3.0f - x * conv.f * conv.f);
-}
-
-void rotateV(struct fp_vector *v,float* delta) {
-  fp_vector v_tmp = *v;
-  v->Z -= delta[ROLL]  * v_tmp.X + delta[PITCH] * v_tmp.Y;
-  v->X += delta[ROLL]  * v_tmp.Z - delta[YAW]   * v_tmp.Y;
-  v->Y += delta[PITCH] * v_tmp.Z + delta[YAW]   * v_tmp.X;
-}
-
-
-static int32_t accLPF32[3]    = {0, 0, 1};
-static float invG; // 1/|G|
-
 void computeIMU () {
   uint8_t axis;
   static int16_t gyroADCprevious[3] = {0,0,0};
@@ -127,7 +28,7 @@ void computeIMU () {
     }
   #else
     #if ACC
-//      ACC_getADC();
+      ACC_getADC();
       getEstimatedAttitude();
     #endif
     #if GYRO
@@ -166,7 +67,114 @@ void computeIMU () {
   #endif
 }
 
+// **************************************************
+// Simplified IMU based on "Complementary Filter"
+// Inspired by http://starlino.com/imu_guide.html
+//
+// adapted by ziss_dm : http://www.multiwii.com/forum/viewtopic.php?f=8&t=198
+//
+// The following ideas was used in this project:
+// 1) Rotation matrix: http://en.wikipedia.org/wiki/Rotation_matrix
+// 2) Small-angle approximation: http://en.wikipedia.org/wiki/Small-angle_approximation
+// 3) C. Hastings approximation for atan2()
+// 4) Optimization tricks: http://www.hackersdelight.org/
+//
+// Currently Magnetometer uses separate CF which is used only
+// for heading approximation.
+//
+// **************************************************
 
+//******  advanced users settings *******************
+/* Set the Low Pass Filter factor for ACC
+   Increasing this value would reduce ACC noise (visible in GUI), but would increase ACC lag time
+   Comment this if  you do not want filter at all.
+   unit = n power of 2 */
+// this one is also used for ALT HOLD calculation, should not be changed
+#ifndef ACC_LPF_FACTOR
+  #define ACC_LPF_FACTOR 4 // that means a LPF of 16
+#endif
+
+/* Set the Gyro Weight for Gyro/Acc complementary filter
+   Increasing this value would reduce and delay Acc influence on the output of the filter*/
+#ifndef GYR_CMPF_FACTOR
+  #define GYR_CMPF_FACTOR 600
+#endif
+
+/* Set the Gyro Weight for Gyro/Magnetometer complementary filter
+   Increasing this value would reduce and delay Magnetometer influence on the output of the filter*/
+#define GYR_CMPFM_FACTOR 250
+
+//****** end of advanced users settings *************
+#define INV_GYR_CMPF_FACTOR   (1.0f / (GYR_CMPF_FACTOR  + 1.0f))
+#define INV_GYR_CMPFM_FACTOR  (1.0f / (GYR_CMPFM_FACTOR + 1.0f))
+
+#define GYRO_SCALE ((2279 * PI)/((32767.0f / 4.0f ) * 180.0f * 1000000.0f)) //(ITG3200 and MPU6050)
+// +-2000/sec deg scale
+// for WMP, empirical value should be #define GYRO_SCALE (1.0f/200e6f)
+// !!!!should be adjusted to the rad/sec and be part defined in each gyro sensor
+
+typedef struct fp_vector {    
+  float X,Y,Z;    
+} t_fp_vector_def;
+
+typedef union {   
+  float A[3];   
+  t_fp_vector_def V;    
+} t_fp_vector;
+
+typedef struct int32_t_vector {
+  int32_t X,Y,Z;
+} t_int32_t_vector_def;
+
+typedef union {
+  int32_t A[3];
+  t_int32_t_vector_def V;
+} t_int32_t_vector;
+
+int16_t _atan2(int32_t y, int32_t x){
+  float z = (float)y / x;
+  int16_t a;
+  if ( abs(y) < abs(x) ){
+     a = 573 * z / (1.0f + 0.28f * z * z);
+   if (x<0) {
+     if (y<0) a -= 1800;
+     else a += 1800;
+   }
+  } else {
+   a = 900 - 573 * z / (z * z + 0.28f);
+   if (y<0) a -= 1800;
+  }
+  return a;
+}
+
+float InvSqrt (float x){ 
+  union{  
+    int32_t i;  
+    float   f; 
+  } conv; 
+  conv.f = x; 
+  conv.i = 0x5f3759df - (conv.i >> 1); 
+  return 0.5f * conv.f * (3.0f - x * conv.f * conv.f);
+}
+
+// Rotate Estimated vector(s) with small angle approximation, according to the gyro data
+void rotateV(struct fp_vector *v,float* delta) {
+  fp_vector v_tmp = *v;
+  v->Z -= delta[ROLL]  * v_tmp.X + delta[PITCH] * v_tmp.Y;
+  v->X += delta[ROLL]  * v_tmp.Z - delta[YAW]   * v_tmp.Y;
+  v->Y += delta[PITCH] * v_tmp.Z + delta[YAW]   * v_tmp.X;
+}
+
+
+static int32_t accLPF32[3]    = {0, 0, 1};
+static float invG; // 1/|G|
+
+static t_fp_vector EstG;
+static t_int32_t_vector EstG32;
+#if MAG
+  static t_int32_t_vector EstM32;
+  static t_fp_vector EstM;
+#endif
 
 void getEstimatedAttitude(){
   uint8_t axis;
@@ -237,6 +245,20 @@ void getEstimatedAttitude(){
   #endif
 }
 
+#define UPDATE_INTERVAL 25000    // 40hz update rate (20hz LPF on acc)
+#define BARO_TAB_SIZE   21
+
+#define ACC_Z_DEADBAND (acc_1G>>5) // was 40 instead of 32 now
+
+
+#define applyDeadband(value, deadband)  \
+  if(abs(value) < deadband) {           \
+    value = 0;                          \
+  } else if(value > 0){                 \
+    value -= deadband;                  \
+  } else if(value < 0){                 \
+    value += deadband;                  \
+  }
 
 #if BARO
 uint8_t getEstimatedAltitude(){
@@ -308,10 +330,20 @@ uint8_t getEstimatedAltitude(){
  
     BaroPID = constrain(BaroPID, -200, 200);
 
+    debug[0] = vel;
+    debug[1] = error16;
+    debug[2] = BaroPID;
+    debug[3] = AltHold;
+
+    /*
+    //D
+    int16_t vel_tmp = vel;
+    applyDeadband(vel_tmp, 5);
+    vario = vel_tmp;
+ 
+    BaroPID -= constrain(conf.D8[PIDALT] * vel_tmp >>4, -150, 150);
+    */
   #endif
   return 1;
 }
-#endif
-
-
-
+#endif //BARO

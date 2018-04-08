@@ -1,25 +1,43 @@
+#if defined(MEGA)
+#define UART_NUMBER 4
+#elif defined(PROMICRO)
+#define UART_NUMBER 2
+#else
 #define UART_NUMBER 1
-static uint8_t CURRENTPORT = 0;
+#endif
+#if defined(GPS_SERIAL)
+#define RX_BUFFER_SIZE 256 // 256 RX buffer is needed for GPS communication (64 or 128 was too short)
+#else
 #define RX_BUFFER_SIZE 256
+#endif
 #define TX_BUFFER_SIZE 128
 #define INBUF_SIZE 64
 
-#if defined(HEX_NANO)
-#define MSP_SET_RAW_RC_TINY      150
-#define MSP_ARM                  151
-#define MSP_DISARM               152
-#define MSP_TRIM_UP              153
-#define MSP_TRIM_DOWN            154
-#define MSP_TRIM_LEFT            155
-#define MSP_TRIM_RIGHT           156
+static volatile uint8_t serialHeadRX[UART_NUMBER], serialTailRX[UART_NUMBER];
+static uint8_t serialBufferRX[RX_BUFFER_SIZE][UART_NUMBER];
+static volatile uint8_t serialHeadTX[UART_NUMBER], serialTailTX[UART_NUMBER];
+static uint8_t serialBufferTX[TX_BUFFER_SIZE][UART_NUMBER];
+static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
+
+#define BIND_CAPABLE 0;  //Used for Spektrum today; can be used in the future for any RX type that needs a bind and has a MultiWii module. 
+#if defined(SPEK_BIND)
+#define BIND_CAPABLE 1;
+#endif
+// Capability is bit flags; next defines should be 2, 4, 8...
+
+const uint32_t PROGMEM capability = 0 + BIND_CAPABLE;
+
+#ifdef DEBUGMSG
+#define DEBUG_MSG_BUFFER_SIZE 128
+static char debug_buf[DEBUG_MSG_BUFFER_SIZE];
+static uint8_t head_debug;
+static uint8_t tail_debug;
 #endif
 
-#define MSP_VERSION 0
+// Multiwii Serial Protocol 0
+#define MSP_VERSION              0
 
-#define BIND_CAPABLE 0;
-
-const uint32_t PROGMEM capability = 0+BIND_CAPABLE;
-
+//to multiwii developpers/committers : do not add new MSP messages without a proper argumentation/agreement on the forum
 #define MSP_IDENT                100   //out message         multitype + multiwii version + protocol version + capability variable
 #define MSP_STATUS               101   //out message         cycletime & errors_count & sensor present & box activation & current setting number
 #define MSP_RAW_IMU              102   //out message         9 DOF
@@ -41,6 +59,15 @@ const uint32_t PROGMEM capability = 0+BIND_CAPABLE;
 #define MSP_WP                   118   //out message         get a WP, WP# is in the payload, returns (WP#, lat, lon, alt, flags) WP#0-home, WP#16-poshold
 #define MSP_BOXIDS               119   //out message         get the permanent IDs associated to BOXes
 
+#if defined(HEX_NANO)
+#define MSP_SET_RAW_RC_TINY      150   //in message          4 rc chan
+#define MSP_ARM                  151
+#define MSP_DISARM               152
+#define MSP_TRIM_UP              153
+#define MSP_TRIM_DOWN            154
+#define MSP_TRIM_LEFT            155
+#define MSP_TRIM_RIGHT           156
+#endif
 
 #define MSP_SET_RAW_RC           200   //in message          8 rc chan
 #define MSP_SET_RAW_GPS          201   //in message          fix, numsat, lat, lon, alt, speed
@@ -62,17 +89,15 @@ const uint32_t PROGMEM capability = 0+BIND_CAPABLE;
 #define MSP_DEBUGMSG             253   //out message         debug string buffer
 #define MSP_DEBUG                254   //out message         debug1,debug2,debug3,debug4
 
-static volatile uint8_t serialHeadRX[UART_NUMBER], serialTailRX[UART_NUMBER];
-static uint8_t serialBufferRX[RX_BUFFER_SIZE][UART_NUMBER];
-static volatile uint8_t serialHeadTX[UART_NUMBER], serialTailTX[UART_NUMBER];
-static uint8_t serialBufferTX[TX_BUFFER_SIZE][UART_NUMBER];
-static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
-
-
-//
 static uint8_t checksum[UART_NUMBER];
 static uint8_t indRX[UART_NUMBER];
 static uint8_t cmdMSP[UART_NUMBER];
+
+#if defined(PROMINI)
+#define CURRENTPORT 0
+#else
+static uint8_t CURRENTPORT = 0;
+#endif
 
 uint32_t read32() {
   uint32_t t = read16();
@@ -88,75 +113,25 @@ uint8_t read8()  {
   return inBuf[indRX[CURRENTPORT]++][CURRENTPORT] & 0xff;
 }
 
-void writeParams(uint8_t b) {
-#ifdef MULTIPLE_CONFIGURATION_PROFILES
-  if (global_conf.currentSet > 2) global_conf.currentSet = 0;
-#else
-  global_conf.currentSet = 0;
-#endif
-  conf.checksum = calculate_sum((uint8_t*)&conf, sizeof(conf));
-  eeprom_write_block((const void*)&conf, (void*)(global_conf.currentSet * sizeof(conf) + sizeof(global_conf)), sizeof(conf));
-  readEEPROM();
-  if (b == 1) blinkLED(15, 20, 1);
-#if defined(BUZZER)
-  alarmArray[7] = 1; //beep if loaded from gui or android
-#endif
+void headSerialResponse(uint8_t err, uint8_t s) {
+  serialize8('$');
+  serialize8('M');
+  serialize8(err ? '!' : '>');
+  checksum[CURRENTPORT] = 0; // start calculating a new checksum
+  serialize8(s);
+  serialize8(cmdMSP[CURRENTPORT]);
 }
 
-
-void SerialOpen(uint8_t port, uint32_t baud) {
-  uint8_t h = ((F_CPU  / 4 / baud - 1) / 2) >> 8;
-  uint8_t l = ((F_CPU  / 4 / baud - 1) / 2);
-  switch (port) {
-#if defined(PROMINI)
-    case 0: UCSR0A  = (1 << U2X0); UBRR0H = h; UBRR0L = l; UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0); break;
-#endif
-#if defined(PROMICRO)
-#if (ARDUINO >= 100) && !defined(TEENSY20)
-    case 0: UDIEN &= ~(1 << SOFE); break; // disable the USB frame interrupt of arduino (it causes strong jitter and we dont need it)
-#endif
-    case 1: UCSR1A  = (1 << U2X1); UBRR1H = h; UBRR1L = l; UCSR1B |= (1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1); break;
-#endif
-#if defined(MEGA)
-    case 0: UCSR0A  = (1 << U2X0); UBRR0H = h; UBRR0L = l; UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0); break;
-    case 1: UCSR1A  = (1 << U2X1); UBRR1H = h; UBRR1L = l; UCSR1B |= (1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1); break;
-    case 2: UCSR2A  = (1 << U2X2); UBRR2H = h; UBRR2L = l; UCSR2B |= (1 << RXEN2) | (1 << TXEN2) | (1 << RXCIE2); break;
-    case 3: UCSR3A  = (1 << U2X3); UBRR3H = h; UBRR3L = l; UCSR3B |= (1 << RXEN3) | (1 << TXEN3) | (1 << RXCIE3); break;
-#endif
-  }
+void headSerialReply(uint8_t s) {
+  headSerialResponse(0, s);
 }
 
-void UartSendData() {
-  #if defined(PROMINI)
-    UCSR0B |= (1<<UDRIE0);
-  #endif
-  #if defined(PROMICRO)
-    switch (CURRENTPORT) {
-      case 0:
-        while(serialHeadTX[0] != serialTailTX[0]) {
-           if (++serialTailTX[0] >= TX_BUFFER_SIZE) serialTailTX[0] = 0;
-           #if !defined(TEENSY20)
-             USB_Send(USB_CDC_TX,serialBufferTX[serialTailTX[0]],1);
-           #else
-             Serial.write(serialBufferTX[serialTailTX[0]],1);
-           #endif
-         }
-        break;
-      case 1: UCSR1B |= (1<<UDRIE1); break;
-    }
-  #endif
-  #if defined(MEGA)
-    switch (CURRENTPORT) {
-      case 0: UCSR0B |= (1<<UDRIE0); break;
-      case 1: UCSR1B |= (1<<UDRIE1); break;
-      case 2: UCSR2B |= (1<<UDRIE2); break;
-      case 3: UCSR3B |= (1<<UDRIE3); break;
-    }
-  #endif
+void inline headSerialError(uint8_t s) {
+  headSerialResponse(1, s);
 }
 
 void tailSerialReply() {
-  serialize8(checksum[CURRENTPORT]);UartSendData();
+  serialize8(checksum[CURRENTPORT]); UartSendData();
 }
 
 void serializeNames(PGM_P s) {
@@ -238,25 +213,6 @@ void serialCom() {
     }
   }
 }
-
-void inline headSerialError(uint8_t s) {
-  headSerialResponse(1, s);
-}
-
-void headSerialResponse(uint8_t err, uint8_t s) {
-  serialize8('$');
-  serialize8('M');
-  serialize8(err ? '!' : '>');
-  checksum[CURRENTPORT] = 0; // start calculating a new checksum
-  serialize8(s);
-  serialize8(cmdMSP[CURRENTPORT]);
-}
-
-void headSerialReply(uint8_t s) {
-  headSerialResponse(0, s);
-}
-
-
 #ifndef SUPPRESS_ALL_SERIAL_MSP
 void evaluateCommand() {
 #if defined(HEX_NANO)
@@ -352,42 +308,34 @@ void evaluateCommand() {
       go_disarm();
       break;
     case MSP_TRIM_UP:
-      if (conf.angleTrim[PITCH] < 120) {
-        conf.angleTrim[PITCH] += 1;
-        writeParams(1);
+      conf.angleTrim[PITCH] += 1;
+      writeParams(1);
 #if defined(LED_RING)
-        blinkLedRing();
+      blinkLedRing();
 #endif
-      }
       break;
     case MSP_TRIM_DOWN:
-      if (conf.angleTrim[PITCH] > -120) {
-        conf.angleTrim[PITCH] -= 1;
-        writeParams(1);
+      conf.angleTrim[PITCH] -= 1;
+      writeParams(1);
 #if defined(LED_RING)
-        blinkLedRing();
+      blinkLedRing();
 #endif
-      }
+
       break;
     case MSP_TRIM_LEFT:
-      if (conf.angleTrim[ROLL] > -120) {
-        conf.angleTrim[ROLL] -= 1;
-        writeParams(1);
+      conf.angleTrim[ROLL] -= 1;
+      writeParams(1);
 #if defined(LED_RING)
-        blinkLedRing();
+      blinkLedRing();
 #endif
-      }
       break;
     case MSP_TRIM_RIGHT:
-      if (conf.angleTrim[ROLL] < 120) {
-        conf.angleTrim[ROLL] += 1;
-        writeParams(1);
+      conf.angleTrim[ROLL] += 1;
+      writeParams(1);
 #if defined(LED_RING)
-        blinkLedRing();
+      blinkLedRing();
 #endif
-      }
       break;
-
 #endif
 #if GPS
     case MSP_SET_RAW_GPS:
@@ -710,7 +658,6 @@ void evaluateCommand() {
 }
 #endif // SUPPRESS_ALL_SERIAL_MSP
 
-
 // evaluate all other incoming serial data
 void evaluateOtherData(uint8_t sr) {
 #ifndef SUPPRESS_OTHER_SERIAL_COMMANDS
@@ -772,6 +719,22 @@ void evaluateOtherData(uint8_t sr) {
 #endif // SUPPRESS_OTHER_SERIAL_COMMANDS
 }
 
+// *******************************************************
+// For Teensy 2.0, these function emulate the API used for ProMicro
+// it cant have the same name as in the arduino API because it wont compile for the promini (eaven if it will be not compiled)
+// *******************************************************
+#if defined(TEENSY20)
+unsigned char T_USB_Available() {
+  int n = Serial.available();
+  if (n > 255) n = 255;
+  return n;
+}
+#endif
+
+// *******************************************************
+// Interrupt driven UART transmitter - using a ring buffer
+// *******************************************************
+
 void serialize32(uint32_t a) {
   serialize8((a    ) & 0xFF);
   serialize8((a >> 8) & 0xFF);
@@ -792,36 +755,253 @@ void serialize8(uint8_t a) {
   serialHeadTX[CURRENTPORT] = t;
 }
 
+#if defined(PROMINI) || defined(MEGA)
+#if defined(PROMINI)
+ISR(USART_UDRE_vect) {  // Serial 0 on a PROMINI
+#endif
+#if defined(MEGA)
+  ISR(USART0_UDRE_vect) { // Serial 0 on a MEGA
+#endif
+    uint8_t t = serialTailTX[0];
+    if (serialHeadTX[0] != t) {
+      if (++t >= TX_BUFFER_SIZE) t = 0;
+      UDR0 = serialBufferTX[t][0];  // Transmit next byte in the ring
+      serialTailTX[0] = t;
+    }
+    if (t == serialHeadTX[0]) UCSR0B &= ~(1 << UDRIE0); // Check if all data is transmitted . if yes disable transmitter UDRE interrupt
+  }
+#endif
+#if defined(MEGA) || defined(PROMICRO)
+  ISR(USART1_UDRE_vect) { // Serial 1 on a MEGA or on a PROMICRO
+    uint8_t t = serialTailTX[1];
+    if (serialHeadTX[1] != t) {
+      if (++t >= TX_BUFFER_SIZE) t = 0;
+      UDR1 = serialBufferTX[t][1];  // Transmit next byte in the ring
+      serialTailTX[1] = t;
+    }
+    if (t == serialHeadTX[1]) UCSR1B &= ~(1 << UDRIE1);
+  }
+#endif
+#if defined(MEGA)
+  ISR(USART2_UDRE_vect) { // Serial 2 on a MEGA
+    uint8_t t = serialTailTX[2];
+    if (serialHeadTX[2] != t) {
+      if (++t >= TX_BUFFER_SIZE) t = 0;
+      UDR2 = serialBufferTX[t][2];
+      serialTailTX[2] = t;
+    }
+    if (t == serialHeadTX[2]) UCSR2B &= ~(1 << UDRIE2);
+  }
+  ISR(USART3_UDRE_vect) { // Serial 3 on a MEGA
+    uint8_t t = serialTailTX[3];
+    if (serialHeadTX[3] != t) {
+      if (++t >= TX_BUFFER_SIZE) t = 0;
+      UDR3 = serialBufferTX[t][3];
+      serialTailTX[3] = t;
+    }
+    if (t == serialHeadTX[3]) UCSR3B &= ~(1 << UDRIE3);
+  }
+#endif
 
-uint8_t SerialRead(uint8_t port) {
+  void UartSendData() {
+#if defined(PROMINI)
+    UCSR0B |= (1 << UDRIE0);
+#endif
+#if defined(PROMICRO)
+    switch (CURRENTPORT) {
+      case 0:
+        while (serialHeadTX[0] != serialTailTX[0]) {
+          if (++serialTailTX[0] >= TX_BUFFER_SIZE) serialTailTX[0] = 0;
+#if !defined(TEENSY20)
+          USB_Send(USB_CDC_TX, serialBufferTX[serialTailTX[0]], 1);
+#else
+          Serial.write(serialBufferTX[serialTailTX[0]], 1);
+#endif
+        }
+        break;
+      case 1: UCSR1B |= (1 << UDRIE1); break;
+    }
+#endif
+#if defined(MEGA)
+    switch (CURRENTPORT) {
+      case 0: UCSR0B |= (1 << UDRIE0); break;
+      case 1: UCSR1B |= (1 << UDRIE1); break;
+      case 2: UCSR2B |= (1 << UDRIE2); break;
+      case 3: UCSR3B |= (1 << UDRIE3); break;
+    }
+#endif
+  }
+
+#if defined(GPS_SERIAL)
+  bool SerialTXfree(uint8_t port) {
+    return (serialHeadTX[port] == serialTailTX[port]);
+  }
+#endif
+
+  void SerialOpen(uint8_t port, uint32_t baud) {
+    uint8_t h = ((F_CPU  / 4 / baud - 1) / 2) >> 8;
+    uint8_t l = ((F_CPU  / 4 / baud - 1) / 2);
+    switch (port) {
+#if defined(PROMINI)
+      case 0: UCSR0A  = (1 << U2X0); UBRR0H = h; UBRR0L = l; UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0); break;
+#endif
+#if defined(PROMICRO)
+#if (ARDUINO >= 100) && !defined(TEENSY20)
+      case 0: UDIEN &= ~(1 << SOFE); break; // disable the USB frame interrupt of arduino (it causes strong jitter and we dont need it)
+#endif
+      case 1: UCSR1A  = (1 << U2X1); UBRR1H = h; UBRR1L = l; UCSR1B |= (1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1); break;
+#endif
+#if defined(MEGA)
+      case 0: UCSR0A  = (1 << U2X0); UBRR0H = h; UBRR0L = l; UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0); break;
+      case 1: UCSR1A  = (1 << U2X1); UBRR1H = h; UBRR1L = l; UCSR1B |= (1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1); break;
+      case 2: UCSR2A  = (1 << U2X2); UBRR2H = h; UBRR2L = l; UCSR2B |= (1 << RXEN2) | (1 << TXEN2) | (1 << RXCIE2); break;
+      case 3: UCSR3A  = (1 << U2X3); UBRR3H = h; UBRR3L = l; UCSR3B |= (1 << RXEN3) | (1 << TXEN3) | (1 << RXCIE3); break;
+#endif
+    }
+  }
+
+  static void inline SerialEnd(uint8_t port) {
+    switch (port) {
+#if defined(PROMINI)
+      case 0: UCSR0B &= ~((1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0) | (1 << UDRIE0)); break;
+#endif
+#if defined(PROMICRO)
+      case 1: UCSR1B &= ~((1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1) | (1 << UDRIE1)); break;
+#endif
+#if defined(MEGA)
+      case 0: UCSR0B &= ~((1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0) | (1 << UDRIE0)); break;
+      case 1: UCSR1B &= ~((1 << RXEN1) | (1 << TXEN1) | (1 << RXCIE1) | (1 << UDRIE1)); break;
+      case 2: UCSR2B &= ~((1 << RXEN2) | (1 << TXEN2) | (1 << RXCIE2) | (1 << UDRIE2)); break;
+      case 3: UCSR3B &= ~((1 << RXEN3) | (1 << TXEN3) | (1 << RXCIE3) | (1 << UDRIE3)); break;
+#endif
+    }
+  }
+
+  static void inline store_uart_in_buf(uint8_t data, uint8_t portnum) {
+#if defined(SPEKTRUM)
+    if (portnum == SPEK_SERIAL_PORT) {
+      if (!spekFrameFlags) {
+        sei();
+        uint32_t spekTimeNow = (timer0_overflow_count << 8) * (64 / clockCyclesPerMicrosecond()); //Move timer0_overflow_count into registers so we don't touch a volatile twice
+        uint32_t spekInterval = spekTimeNow - spekTimeLast;                                       //timer0_overflow_count will be slightly off because of the way the Arduino core timer interrupt handler works; that is acceptable for this use. Using the core variable avoids an expensive call to millis() or micros()
+        spekTimeLast = spekTimeNow;
+        if (spekInterval > 5000) {  //Potential start of a Spektrum frame, they arrive every 11 or every 22 ms. Mark it, and clear the buffer.
+          serialTailRX[portnum] = 0;
+          serialHeadRX[portnum] = 0;
+          spekFrameFlags = 0x01;
+        }
+        cli();
+      }
+    }
+#endif
+
+    uint8_t h = serialHeadRX[portnum];
+    if (++h >= RX_BUFFER_SIZE) h = 0;
+    if (h == serialTailRX[portnum]) return; // we did not bite our own tail?
+    serialBufferRX[serialHeadRX[portnum]][portnum] = data;
+    serialHeadRX[portnum] = h;
+  }
+
+#if defined(PROMINI)
+  ISR(USART_RX_vect)  {
+    store_uart_in_buf(UDR0, 0);
+  }
+#endif
+#if defined(PROMICRO)
+  ISR(USART1_RX_vect)  {
+    store_uart_in_buf(UDR1, 1);
+  }
+#endif
+#if defined(MEGA)
+  ISR(USART0_RX_vect)  {
+    store_uart_in_buf(UDR0, 0);
+  }
+  ISR(USART1_RX_vect)  {
+    store_uart_in_buf(UDR1, 1);
+  }
+  ISR(USART2_RX_vect)  {
+    store_uart_in_buf(UDR2, 2);
+  }
+  ISR(USART3_RX_vect)  {
+    store_uart_in_buf(UDR3, 3);
+  }
+#endif
+
+  uint8_t SerialRead(uint8_t port) {
 #if defined(PROMICRO)
 #if defined(TEENSY20)
-  if (port == 0) return Serial.read();
+    if (port == 0) return Serial.read();
 #else
 #if (ARDUINO >= 100)
-  if (port == 0) USB_Flush(USB_CDC_TX);
+    if (port == 0) USB_Flush(USB_CDC_TX);
 #endif
-  if (port == 0) return USB_Recv(USB_CDC_RX);
+    if (port == 0) return USB_Recv(USB_CDC_RX);
 #endif
 #endif
-  uint8_t t = serialTailRX[port];
-  uint8_t c = serialBufferRX[t][port];
-  if (serialHeadRX[port] != t) {
-    if (++t >= RX_BUFFER_SIZE) t = 0;
-    serialTailRX[port] = t;
+    uint8_t t = serialTailRX[port];
+    uint8_t c = serialBufferRX[t][port];
+    if (serialHeadRX[port] != t) {
+      if (++t >= RX_BUFFER_SIZE) t = 0;
+      serialTailRX[port] = t;
+    }
+    return c;
   }
-  return c;
-}
 
+#if defined(SPEKTRUM)
+  uint8_t SerialPeek(uint8_t port) {
+    uint8_t c = serialBufferRX[serialTailRX[port]][port];
+    if ((serialHeadRX[port] != serialTailRX[port])) return c; else return 0;
+  }
+#endif
 
-uint8_t SerialAvailable(uint8_t port) {
+  uint8_t SerialAvailable(uint8_t port) {
 #if defined(PROMICRO)
 #if !defined(TEENSY20)
-  if (port == 0) return USB_Available(USB_CDC_RX);
+    if (port == 0) return USB_Available(USB_CDC_RX);
 #else
-  if (port == 0) return T_USB_Available();
+    if (port == 0) return T_USB_Available();
 #endif
 #endif
-  return (serialHeadRX[port] - serialTailRX[port]) % RX_BUFFER_SIZE;
-}
+    return (serialHeadRX[port] - serialTailRX[port]) % RX_BUFFER_SIZE;
+  }
 
+  void SerialWrite(uint8_t port, uint8_t c) {
+#if !defined(PROMINI)
+    CURRENTPORT = port;
+#endif
+    serialize8(c); UartSendData();
+  }
+
+#ifdef DEBUGMSG
+  void debugmsg_append_str(const char *str) {
+    while (*str) {
+      debug_buf[head_debug++] = *str++;
+      if (head_debug == DEBUG_MSG_BUFFER_SIZE) {
+        head_debug = 0;
+      }
+    }
+  }
+
+  static uint8_t debugmsg_available() {
+    if (head_debug >= tail_debug) {
+      return head_debug - tail_debug;
+    } else {
+      return head_debug + (DEBUG_MSG_BUFFER_SIZE - tail_debug);
+    }
+  }
+
+  static void debugmsg_serialize(uint8_t l) {
+    for (uint8_t i = 0; i < l; i++) {
+      if (head_debug != tail_debug) {
+        serialize8(debug_buf[tail_debug++]);
+        if (tail_debug == DEBUG_MSG_BUFFER_SIZE) {
+          tail_debug = 0;
+        }
+      } else {
+        serialize8('\0');
+      }
+    }
+  }
+#else
+  void debugmsg_append_str(const char *str) {};
+#endif

@@ -24,6 +24,67 @@
   static uint8_t PCInt_RX_Pins[PCINT_PIN_COUNT] = {PCINT_RX_BITS}; // if this slowes the PCINT readings we can switch to a define for each pcint bit
 #endif
 
+void configureReceiver() {
+  /******************    Configure each rc pin for PCINT    ***************************/
+  #if defined(STANDARD_RX)
+    #if defined(MEGA)
+      DDRK = 0;  // defined PORTK as a digital port ([A8-A15] are consired as digital PINs and not analogical)
+    #endif
+    // PCINT activation
+    for(uint8_t i = 0; i < PCINT_PIN_COUNT; i++){ // i think a for loop is ok for the init.
+      PCINT_RX_PORT |= PCInt_RX_Pins[i];
+      PCINT_RX_MASK |= PCInt_RX_Pins[i];
+    }
+    PCICR = PCIR_PORT_BIT;
+    
+    /*************    atmega328P's Specific Aux2 Pin Setup    *********************/
+    #if defined(PROMINI)
+     #if defined(RCAUXPIN)
+        PCICR  |= (1 << 0) ; // PCINT activated also for PINS [D8-D13] on port B
+        #if defined(RCAUXPIN8)
+          PCMSK0 = (1 << 0);
+        #endif
+        #if defined(RCAUXPIN12)
+          PCMSK0 = (1 << 4);
+        #endif
+      #endif
+    #endif
+    
+    /***************   atmega32u4's Specific RX Pin Setup   **********************/
+    #if defined(PROMICRO)
+      //Trottle on pin 7
+      DDRE &= ~(1 << 6); // pin 7 to input
+      PORTE |= (1 << 6); // enable pullups
+      EIMSK |= (1 << INT6); // enable interuppt
+      EICRB |= (1 << ISC60);
+      // Aux2 pin on PBO (D17/RXLED)
+      #if defined(RCAUX2PIND17)
+        DDRB &= ~(1 << 0); // set D17 to input 
+      #endif
+      // Aux2 pin on PD2 (RX0)
+      #if defined(RCAUX2PINRXO)
+        DDRD &= ~(1 << 2); // RX to input
+        PORTD |= (1 << 2); // enable pullups
+        EIMSK |= (1 << INT2); // enable interuppt
+        EICRA |= (1 << ISC20);
+      #endif
+    #endif
+    
+  /*************************   Special RX Setup   ********************************/
+  #endif
+  // Init PPM SUM RX
+  #if defined(SERIAL_SUM_PPM)
+    PPM_PIN_INTERRUPT; 
+  #endif
+  // Init Sektrum Satellite RX
+  #if defined (SPEKTRUM)
+    SerialOpen(SPEK_SERIAL_PORT,115200);
+  #endif
+  // Init SBUS RX
+  #if defined(SBUS)
+    SerialOpen(1,100000);
+  #endif
+}
 
 
 void computeRC() {

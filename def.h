@@ -11,6 +11,23 @@
 
 #define MULTITYPE 3
 
+#if defined(HEX_NANO)
+#define MPU6050
+#define BMP085
+#define HMC5883
+#define ACC_ORIENTATION(X, Y, Z)  {accADC[ROLL]  = -X; accADC[PITCH]  = -Y; accADC[YAW]  =  Z;}
+#define GYRO_ORIENTATION(X, Y, Z) {gyroADC[ROLL] =  Y; gyroADC[PITCH] = -X; gyroADC[YAW] = -Z;}
+#define MAG_ORIENTATION(X, Y, Z)  {magADC[ROLL]  =  X; magADC[PITCH]  =  -Y; magADC[YAW]  = -Z;}
+#define MPU6050_EN_I2C_BYPASS // MAG connected to the AUX I2C bus of MPU6050 
+#undef INTERNAL_I2C_PULLUPS
+//#define MINTHROTTLE 1050
+//#define MAXTHROTTLE 2000
+#define EXT_MOTOR_RANGE
+#endif
+
+#if !defined(ALT_HOLD_THROTTLE_NEUTRAL_ZONE)
+  #define ALT_HOLD_THROTTLE_NEUTRAL_ZONE 40
+#endif 
 
 /**************************************************************************************/
 /***************              Sensor Type definitions              ********************/
@@ -57,19 +74,7 @@
   #define SONAR 0
 #endif
 
-#if defined(HEX_NANO)
-#define MPU6050
-#define BMP085
-#define HMC5883
-#define ACC_ORIENTATION(X, Y, Z)  {accADC[ROLL]  = -X; accADC[PITCH]  = -Y; accADC[YAW]  =  Z;}
-#define GYRO_ORIENTATION(X, Y, Z) {gyroADC[ROLL] =  Y; gyroADC[PITCH] = -X; gyroADC[YAW] = -Z;}
-#define MAG_ORIENTATION(X, Y, Z)  {magADC[ROLL]  =  X; magADC[PITCH]  =  -Y; magADC[YAW]  = -Z;}
-#define MPU6050_EN_I2C_BYPASS // MAG connected to the AUX I2C bus of MPU6050 
-#undef INTERNAL_I2C_PULLUPS
-//#define MINTHROTTLE 1050
-//#define MAXTHROTTLE 2000
-#define EXT_MOTOR_RANGE
-#endif
+
 
 #if defined(SBUS)
 #define RC_CHANS 18

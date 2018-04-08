@@ -1,3 +1,6 @@
+#if !defined(SRF08_MAX_SENSORS) 
+  #define SRF08_MAX_SENSORS    4        // maximum number of sensors we'll allow (can go up to 8)
+#endif
 
 #if !defined(MPU6050_ADDRESS)
   #define MPU6050_ADDRESS     0x68 // address pin AD0 low (GND), default for FreeIMU v0.4 and InvenSense evaluation board
@@ -719,6 +722,45 @@ void ACC_Common() {
     accADC[ROLL] = ((accADC[ROLL]  - accADC[PITCH])*7)/10;
     accADC[PITCH] = temp;
   #endif
+}
+
+static struct {
+  // sensor registers from the MS561101BA datasheet
+  int32_t  range[SRF08_MAX_SENSORS];
+  int8_t   sensors;              // the number of sensors present
+  int8_t   current;              // the current sensor being read
+  uint8_t  state;
+  uint32_t deadline;
+} srf08_ctx;
+
+void i2c_init(void) {
+  #if defined(INTERNAL_I2C_PULLUPS)
+    I2C_PULLUPS_ENABLE
+  #else
+    I2C_PULLUPS_DISABLE
+  #endif
+  TWSR = 0;                                    // no prescaler => prescaler = 1
+  TWBR = ((F_CPU / I2C_SPEED) - 16) / 2;       // change the I2C clock rate
+  TWCR = 1<<TWEN;                              // enable twi module, no interrupt
+}
+
+void Sonar_init() {
+  memset(&srf08_ctx, 0, sizeof(srf08_ctx));
+  srf08_ctx.deadline = 4000000;
+}
+
+void initSensors() {
+  delay(200);
+  POWERPIN_ON;
+  delay(100);
+  i2c_init();
+  delay(100);
+  if (GYRO) Gyro_init();
+  //if (BARO) Baro_init();
+  //if (MAG) Mag_init();
+  if (ACC) {ACC_init();acc_25deg = acc_1G * 0.423;}
+  if (SONAR) Sonar_init();
+  f.I2C_INIT_DONE = 1;
 }
 
 

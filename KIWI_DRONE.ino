@@ -19,7 +19,7 @@
 #include <avr/pgmspace.h> // PROGMEM을 사용하기 위한 헤더 파일
 #define VERSION 220 // 버전 코드
 
-#if defined(KIWI) // KIWI라는 키워드가 정의되어 있다면
+#if defined(HEX_NANO) // KIWI라는 키워드가 정의되어 있다면
 volatile uint16_t serialRcValue[RC_CHANS] = {1502, 1502, 1502, 1502, 1502, 1502, 1502, 1502}; // 시리얼RC값 초기화
 #endif
 
@@ -727,6 +727,102 @@ void setup() {
   STABLEPIN_PINMODE;
   POWERPIN_OFF;
   initOutput();
+
+#ifdef MULTIPLE_CONFIGURATION_PROFILES
+  for (global_conf.currentSet = 0; global_conf.currentSet < 3; global_conf.currentSet++) { // check all settings integrity
+    readEEPROM();
+  }
+#else
+  global_conf.currentSet = 0;
+  readEEPROM();
+#endif
+
+  readGlobalSet();
+  readEEPROM();                                    // load current setting data
+  blinkLED(2, 40, global_conf.currentSet + 1);
+  configureReceiver();
+
+#if defined (PILOTLAMP)
+  PL_INIT;
+#endif
+
+#if defined(OPENLRSv2MULTI)
+  initOpenLRS();
+#endif
+
+  initSensors();
+
+#if defined(I2C_GPS) || defined(GPS_SERIAL) || defined(GPS_FROM_OSD)
+  GPS_set_pids();
+#endif
+
+  previousTime = micros();
+
+  calibratingG = 512;
+  calibratingB = 200;
+
+#if defined(POWERMETER)
+  for (uint8_t i = 0; i <= PMOTOR_SUM; i++)
+    pMeter[i] = 0;
+#endif
+
+  /************************************/
+#if defined(GPS_SERIAL)
+  GPS_SerialInit();
+  for (uint8_t i = 0; i <= 5; i++) {
+    GPS_NewData();
+    LEDPIN_ON
+    delay(20);
+    LEDPIN_OFF
+    delay(80);
+  }
+  if (!GPS_Present) {
+    SerialEnd(GPS_SERIAL);
+    SerialOpen(0, SERIAL0_COM_SPEED);
+  }
+#if !defined(GPS_PROMINI)
+  GPS_Present = 1;
+#endif
+  GPS_Enable = GPS_Present;
+#endif
+  /************************************/
+
+#if defined(I2C_GPS) || defined(TINY_GPS) || defined(GPS_FROM_OSD)
+  GPS_Enable = 1;
+#endif
+
+#if defined(LCD_ETPP) || defined(LCD_LCD03) || defined(OLED_I2C_128x64) || defined(LCD_TELEMETRY_STEP)
+  initLCD();
+#endif
+#ifdef LCD_TELEMETRY_DEBUG
+  telemetry_auto = 1;
+#endif
+#ifdef LCD_CONF_DEBUG
+  configurationLoop();
+#endif
+#ifdef LANDING_LIGHTS_DDR
+  init_landing_lights();
+#endif
+  ADCSRA |= _BV(ADPS2) ; ADCSRA &= ~_BV(ADPS1); ADCSRA &= ~_BV(ADPS0); // this speeds up analogRead without loosing too much resolution: http://www.arduino.cc/cgi-bin/yabb2/YaBB.pl?num=1208715493/11
+#if defined(LED_FLASHER)
+  init_led_flasher();
+  led_flasher_set_sequence(LED_FLASHER_SEQUENCE);
+#endif
+  f.SMALL_ANGLES_25 = 1; // important for gyro only conf
+#ifdef LOG_PERMANENT
+  // read last stored set
+  readPLog();
+  plog.lifetime += plog.armed_time / 1000000;
+  plog.start++;         // #powercycle/reset/initialize events
+  // dump plog data to terminal
+#ifdef LOG_PERMANENT_SHOW_AT_STARTUP
+  dumpPLog(0);
+#endif
+  plog.armed_time = 0;   // lifetime in seconds
+  //plog.running = 0;       // toggle on arm & disarm to monitor for clean shutdown vs. powercut
+#endif
+
+  debugmsg_append_str("initialization completed\n");
 }
 
 void go_arm() {

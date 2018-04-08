@@ -6,6 +6,21 @@ uint8_t calculate_sum(uint8_t *cb , uint8_t siz) {
   return sum;
 }
 
+void writeParams(uint8_t b) {
+  #ifdef MULTIPLE_CONFIGURATION_PROFILES
+    if(global_conf.currentSet>2) global_conf.currentSet=0;
+  #else
+    global_conf.currentSet=0;
+  #endif
+  conf.checksum = calculate_sum((uint8_t*)&conf, sizeof(conf));
+  eeprom_write_block((const void*)&conf, (void*)(global_conf.currentSet * sizeof(conf) + sizeof(global_conf)), sizeof(conf));
+  readEEPROM();
+  if (b == 1) blinkLED(15,20,1);
+  #if defined(BUZZER)
+    alarmArray[7] = 1; //beep if loaded from gui or android
+  #endif
+}
+
 
 void readEEPROM() {
   uint8_t i;
@@ -156,6 +171,13 @@ void LoadDefaults() {
   writeParams(0); // this will also (p)reset checkNewConf with the current version number again.
 }
 
+void readGlobalSet() {
+  eeprom_read_block((void*)&global_conf, (void*)0, sizeof(global_conf));
+  if(calculate_sum((uint8_t*)&global_conf, sizeof(global_conf)) != global_conf.checksum) {
+    global_conf.currentSet = 0;
+    global_conf.accZero[ROLL] = 5000;    // for config error signalization
+  }
+}
 
 void writeGlobalSet(uint8_t b) {
   global_conf.checksum = calculate_sum((uint8_t*)&global_conf, sizeof(global_conf));
