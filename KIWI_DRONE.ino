@@ -1,8 +1,9 @@
 /*
-   [KIWI DRONE] is modifed from FlexBot Project(http://flexbot.cc/wiki)
-   [KIWI DRONE] is under the terms of the GNU General Public License
-   [KIWI DRONE] is made for education of Software and Drone
-   [KIWI DRONE] is made by WHIT-edu CodingBird(http://codingbird.kr)
+   [KIWI DRONE] is 
+   modifed from FlexBot Project(http://flexbot.cc/wiki)
+   under the terms of the GNU General Public License
+   made for education of Software and Drone
+   made by WHIT-edu CodingBird(http://codingbird.kr)
 
    MultiWiiCopter by Alexandre Dubus www.multiwii.com March  2013     V2.2
    This program is free software: you can redistribute it and/or modify
